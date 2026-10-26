@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>2Dドット避けゲーム</title>
+
+    <style>
+        /* ページ全体の設定 */
+        * {
+            box-sizing: border-box;
+        }   
+
+        body {
+            margin: 0;
+            padding: 12px;
+            background-color: #222;
+            color: white;
+            font-family: sans-serif;
+
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+
+            min-height: 100vh;
+        }
+
+        /* ゲーム全体をまとめる箱 */
+        #gameContainer {
+            width: 100%;
+            text-align: center;
+        }
+
+        /* タイトル */
+        h1 {
+            margin: 0 0 8px;
+            font-size: clamp(20px, 4vw, 30px);
+        }
+
+        /* スコアと最高スコア */
+        #score 
+        #highScore {
+            font-size: 18px;
+            margin-bottom: 6px;
+        }
+
+        /* Canvas（ゲーム画面） */
+        canvas {
+            display: block;
+            margin: 8px auto 0;
+        
+        /* 元の500*600の比率を保ちながら縮小 */    
+        width: min(
+            500px,
+            calc(100vw - 24px),
+            calc((100vh - 230px) * 5 / 6)
+        );    
+           
+        height: auto;    
+        border: 3px solid white;    
+        background-color: #111;                        
+    }
+
+        /* メッセージ */
+        #message {
+            height: 30px;
+            margin-top: 8px;
+            font-size: 16px;
+        }
+        
+        /* スタート・リトライボタン */
+        button {
+            margin-top: 8px;
+            padding: 8px 24px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="gameContainer">
+
+    <h1>2Dドット避けゲーム</h1>
+
+    <!-- スコア表示 -->
+    <div id="score">スコア：0</div>
+    <div id="highScore">最高スコア : 0</div>
+
+    <!-- ゲーム画面 -->
+    <canvas id="gameCanvas" width="500" height="600"></canvas>
+
+    <!-- ゲームの状態を表示 -->
+    <div id="message">スタートボタンを押してください</div>
+
+    <!-- ゲーム開始・リトライボタン -->
+    <button id="startButton">スタート</button>
+
+</div>
+
+
+<script>
+
+    /* =====================================================
+       ① Canvasの準備
+       ===================================================== */
+
+    const canvas = document.getElementById("gameCanvas");
+
+    const ctx = canvas.getContext("2d");
+
+
+   /* =====================================================
+   プレイヤー・敵の画像を読み込む
+   ===================================================== */
+
+   // プレイヤー画像
+   const playerImage = new Image();
+   playerImage.src = "images/player.png";
+
+   // 敵画像
+   const enemyImage = new Image();
+   enemyImage.src = "images/enemy.png";
+
+
+    /* =====================================================
+       ② HTML要素を取得
+       ===================================================== */
+
+    const scoreElement = document.getElementById("score");
+    
+    const highScoreElement = document.getElementById("highScore");
+
+    const messageElement = document.getElementById("message");
+
+    const startButton = document.getElementById("startButton");
+
+
+    /* =====================================================
+       ③ ゲームで使用する変数
+       ===================================================== */
+
+    // ゲームが現在動いているかどうか
+    let gameRunning = false;
+
+    // 現在のスコア
+    let score = 0;
+
+    // sessionStorage:ブラウザのタブを閉じるまでデータを保持する
+    // LocalStorageから最高スコアを読み込む
+    // 保存されていなければ0にする
+    let highScore = Number(localStorage.getItem("highScore")) || 0;
+
+    // 敵を生成するためのタイマー
+    let enemyTimer = 0;
+
+    // スコアを増やすためのタイマー
+    let scoreTimer = 0;
+
+
+    /* =====================================================
+       ④ プレイヤーの設定
+       ===================================================== */
+
+    const player = {
+        
+        // プレイヤーの位置
+        x: 225,
+        y: 520,
+
+        // プレイヤーの大きさ
+        width: 48,
+        height: 48,
+
+        // 移動速度
+        speed: 5,
+
+        // 色
+        color: "blue"
+    };
+
+
+    /* =====================================================
+       ⑤ 敵を保存する配列
+       ===================================================== */
+
+    let enemies = [];
+
+
+    /* =====================================================
+       ⑥ キーボード入力の管理
+       ===================================================== */
+
+    const keys = {};
+
+
+    // キーが押されたとき
+    document.addEventListener("keydown", function(event) {
+
+        keys[event.key] = true;
+
+    });
+
+
+    // キーが離されたとき
+    document.addEventListener("keyup", function(event) {
+
+        keys[event.key] = false;
+
+    });
+
+
+    /* =====================================================
+       ⑦ マウス操作
+       ===================================================== */
+
+    canvas.addEventListener("mousemove", function(event) {
+
+        // ゲーム中でなければ何もしない
+        if (!gameRunning) {
+            return;
+        }
+
+        // ブラウザ上で表示されているCanvasの位置とサイズ
+        const rect = canvas.getBoundingClientRect();
+
+        // 表示上のマウス座標を、ゲーム内部の座標に変換
+        const mouseX = 
+           (event.clientX - rect.left) * (canvas.width / rect.width);
+
+        // プレイヤーの中心をマウス位置に合わせる
+        player.x = mouseX - player.width / 2;
+
+        // プレイヤーがCanvasの外に出ないようにする
+        keepPlayerInsideCanvas();
+
+    });
+
+
+    /* =====================================================
+       ⑧ プレイヤーの移動処理
+       ===================================================== */
+
+    function updatePlayer() {
+
+        // 左矢印キー
+        if (keys["ArrowLeft"]) {
+            player.x -= player.speed;
+        }
+
+        // 右矢印キー
+        if (keys["ArrowRight"]) {
+            player.x += player.speed;
+        }
+
+        // プレイヤーがCanvasの外に出ないようにする
+        keepPlayerInsideCanvas();
+
+    }
+
+
+    /* =====================================================
+       ⑨ プレイヤーをCanvas内に制限する
+       ===================================================== */
+
+    function keepPlayerInsideCanvas() {
+
+        // 左端より外に出た場合
+        if (player.x < 0) {
+            player.x = 0;
+        }
+
+        // 右端より外に出た場合
+        if (player.x + player.width > canvas.width) {
+            player.x = canvas.width - player.width;
+        }
+
+    }
+
+
+    /* =====================================================
+       ⑩ 敵を生成する処理
+       ===================================================== */
+
+    function createEnemy() {
+
+        //敵の大きさ
+        const size = 48;
+
+        //敵が出現するx座標をランダムに決める
+        const x = Math.random() * (canvas.width - size);
+
+
+        //通常時の敵の速度
+        let enemySpeed = 3 +Math.random() * 2;
+         
+        
+　　　　 /*
+          * スコアに応じて敵の速度を上げる
+          *
+          * 100点 → +2
+          * 200点 → さらに+2
+          * 300点 → さらに+2
+          */
+          
+         if (score >= 100) {
+             enemySpeed += 2;
+         }
+
+         if (score >= 200) {
+             enemySpeed += 2;
+         }
+
+         if (score >= 300) {
+             enemySpeed += 2;
+         }
+         
+         
+        //　敵オブジェクトを作成
+        const enemy = {
+
+              // X座標
+              x: x,
+        
+              //　画面の上から出現
+              y: -size,
+
+             // 大きさ
+             width: size,
+             height: size,
+
+             //　落下速度
+             speed: enemySpeed,
+
+        };
+
+
+
+         //　敵を配列に追加
+          enemies.push(enemy);
+
+ }
+            
+
+    /* =====================================================
+       ⑪ 敵の移動処理
+       ===================================================== */
+
+    function updateEnemies() {
+
+        // 配列に入っている敵を後ろから処理
+        for (let i = enemies.length - 1; i >= 0; i--) {
+
+            const enemy = enemies[i];
+
+            
+            // 敵を下方向に移動させます。
+            enemy.y += enemy.speed;
+
+
+            
+            // 敵が画面の下まで行った場合
+            if (enemy.y > canvas.height) {
+
+                // 敵を削除
+                enemies.splice(i, 1);
+
+                // スコアを1点増やす
+                score++;
+               
+                // スコア表示を更新
+                updateScore();
+
+                continue;
+            }
+
+
+            
+            // プレイヤーと敵が接触しているか確認
+            if (checkCollision(player, enemy)) {
+
+                // ゲームオーバー
+                gameOver();
+
+                return;
+            }
+ 
+       }
+
+  }
+
+
+    /* =====================================================
+       ⑫ 当たり判定
+       ===================================================== */
+
+    function checkCollision(a, b) {
+
+        return (
+            a.x < b.x + b.width &&
+            
+            a.x + a.width > b.x &&
+            
+            a.y < b.y + b.height &&
+            
+            a.y + a.height > b.y
+ 
+       );
+
+  }
+
+
+    /* =====================================================
+       ⑬ プレイヤーをPNG画像で描画する
+       ===================================================== */
+
+    function drawPlayer() {
+
+        /* 
+         * drawImage()を使って、
+         * player.pngをCanvasに描画します。
+         *
+         * drawImage(
+         *     画像,
+         *     X座標,
+         *     Y座標,
+         *     幅,
+         *     高さ
+         * );
+         */
+
+
+      if (playerImage.complete) {      
+
+
+          ctx.drawImage(
+              playerImage,
+              player.x,
+              player.y,
+              player.width,
+              player.height
+         );
+
+
+    } else {
+
+      
+       /*
+        * 画像がまだ読み込まれていない場合の
+        * 仮の表示です。
+        * 
+        * 画像読み込み中でもゲーム画面が
+        * 真っ白にならないようにしています。
+        */
+     ctx.fillStyle = "blue";
+
+
+
+     ctx.fillRect(
+         player.x,
+         player.y,
+         player.width,
+         player.height
+       );
+   }
+}        
+
+
+    /* =====================================================
+       ⑭ 敵をPNG画像で描画する
+       ===================================================== */
+
+    function drawEnemies() {
+
+        /*
+         * enemies配列に入っている敵を
+         * 1体ずつ描画します。
+         */
+     for (const enemy of enemies) {
+
+
+       /*
+        * enemy.pngが読み込まれていれば、
+        * PNG画像を描画します。
+        */
+
+
+       if (enemyImage.complete) {
+
+       
+       ctx.drawImage(
+           enemyImage,
+           enemy.x,
+           enemy.y,
+           enemy.width,
+           enemy.height
+       );
+
+
+    } else {
+
+
+       /* 
+        * 画像が読み込まれていない場合は、
+　　　  * 仮に赤い四角を表示します。
+        */
+
+
+       ctx.fillStyle = "red";
+
+
+
+       ctx.fillRect(
+           enemy.x,
+           enemy.y,
+           enemy.width,
+           enemy.height     
+         );
+
+       }
+ 
+    }
+   
+}
+
+
+    /* =====================================================
+       ⑮ ゲーム画面全体を描画する
+       ===================================================== */
+
+    function draw() {
+
+        // Canvasを一度全部消す
+        ctx.clearRect(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+
+        // プレイヤーを描画
+        drawPlayer();
+
+
+        // 敵を描画
+        drawEnemies();
+
+  }
+
+
+    /* =====================================================
+       ⑯ スコア表示を更新
+       ===================================================== */
+
+    function updateScore() {
+
+      scoreElement.textContent = "スコア：" + score;
+    
+  }
+
+
+    /* =====================================================
+       ⑰ 最高スコア表示を更新
+       ===================================================== */
+ 
+  function updateHighScore() {
+  
+      highScoreElement.textContent = 
+            "最高スコア：" + highScore;
+
+ }
+
+
+    /* =====================================================
+       ⑱ ゲーム状態の更新
+       ===================================================== */
+
+    function update() {
+
+        // ゲームが動いていない場合
+        if (!gameRunning) {
+            return;
+        }
+
+
+        // プレイヤーを移動
+        updatePlayer();
+
+
+        // 敵を移動
+        updateEnemies();
+
+
+        // 適生成タイマー
+        enemyTimer++;
+
+
+        // 約1秒ごとに敵を生成
+        if (enemyTimer >= 60) {
+
+            createEnemy();
+           
+            enemyTimer = 0;
+        }
+
+
+        // スコアタイマー
+        scoreTimer++;
+
+
+        // 約1秒ごとにスコアを1点追加
+        if (scoreTimer >= 60) {
+
+            score++;
+
+            updateScore();
+
+            scoreTimer = 0;
+
+       }
+
+ }
+
+
+    /* =====================================================
+       ⑲ ゲームループ
+       ===================================================== */
+
+    function gameLoop() {
+
+        // ゲームの状態を更新
+        update();
+
+        // ゲーム画面を描画
+        draw();
+
+        // 次のフレームでも実行
+        requestAnimationFrame(gameLoop);
+
+ }
+
+
+    /* =====================================================
+       ⑳ ゲーム開始処理
+       ===================================================== */
+
+    function startGame() {
+
+        // ゲームを開始
+        gameRunning = true;
+
+        // スコアをリセット
+        score = 0;
+
+        // タイマーをリセット
+        enemyTimer = 0;
+        scoreTimer = 0;
+
+        // 敵をすべて削除
+        enemies = [];
+
+       
+        // プレイヤーを初期位置に戻す
+        player.x = 
+            canvas.width / 2 - player.width / 2;
+
+        player.y = 
+            canvas.height - 80;
+
+        // スコア表示を更新
+        updateScore();
+
+        // 最高スコア表示を更新
+         updateHighScore();
+
+        // メッセージを変更
+        messageElement.textContent = 
+           "敵を避けてください！";
+
+        // ボタンをリトライに変更 
+        startButton.textContent = "リトライ";
+ 
+ }
+
+
+    /* =====================================================
+       ㉑ ゲームオーバー処理
+       ===================================================== */
+
+    function gameOver() {
+
+        
+        // ゲームを停止
+        gameRunning = false;
+
+        // 今回のスコアが最高スコアを超えた場合
+        if (score > highScore) {
+
+            // 最高スコア更新
+            highScore = score;
+
+            // sessionStorage:ブラウザのタブを閉じるまでデータを保持する
+            // LocalStorageに保存
+            localStorage.setItem(
+                "highScore",
+                highScore
+            );
+
+
+            // 画面の最高スコアも更新
+            updateHighScore();
+ 
+     
+     /*
+      * 最高スコアを更新したので、
+      * NEW RECORD!を表示します。
+      */
+     messageElement.textContent =
+         "🎉 NEW RECORD! 🎉 スコア: " + score;
+
+
+   }else {
+
+
+     /*
+      * 最高スコアを更新できなかった場合は、
+      * 通常のゲームオーバーを表示します。
+      */
+      messageElement.textContent =
+
+         "ゲームオーバー ! スコア :" + score;
+    
+   }
+  
+}
+
+
+    /* =====================================================
+       ㉒ スタートボタン
+       ===================================================== */
+
+    startButton.addEventListener("click", function() {
+
+        startGame();
+
+    });
+
+
+    /* =====================================================
+       ㉓ ページ読み込み時の処理
+       ===================================================== */
+
+    // 保存されている最高スコアを表示
+    updateHighScore();
+
+    // スコアを初期表示
+    updateScore();
+
+    // ゲームループ開始
+    gameLoop();
+
+</script>
+
+</body>
+</html>
